@@ -152,9 +152,8 @@ class FilestoreInstance(object):
     """
     credentials = oauth2client.client.GoogleCredentials.get_application_default(
     )
-    filestore_api_resource = discovery.build(
+    return discovery.build(
         SERVICE, API_VERSION, credentials=credentials, cache_discovery=False)
-    return filestore_api_resource
 
   @retry
   def _get_instance(self) -> dict[str:str]:
@@ -202,8 +201,7 @@ class FilestoreInstance(object):
     snap_name = f"{SNAP_PREFIX}{self.retention_policy}-{time.strftime(TIME_PATTERN)}"
     request = self.snapshot.create(parent=self.url, snapshotId=snap_name)
     response = request.execute()
-    operation_url = response["name"]
-    if operation_url:
+    if operation_url := response["name"]:
       logger.info(
           "Snapshot creation of %s is running as part of %s",
           snap_name, get_resource_name(operation_url))
@@ -225,8 +223,7 @@ class FilestoreInstance(object):
     monitor_attempts = 8
     attempt = 1
     while attempt <= monitor_attempts:
-      operation_details = self._get_operation(operation_url)
-      if operation_details:
+      if operation_details := self._get_operation(operation_url):
         if operation_details.get("done", False):
           if operation_details.get("response", False):
             logger.info(
@@ -315,12 +312,11 @@ class FilestoreInstance(object):
     Returns:
       A filtered list of the retention policy READY snapshots only.
     """
-    scheduler_snapshots_list = []
-    for snapshot in self.snapshots:
-      if f"{SNAP_PREFIX}{self.retention_policy}-" in snapshot["name"]:
-        if snapshot["state"] == "READY":
-          scheduler_snapshots_list.append(snapshot["name"])
-    return scheduler_snapshots_list
+    return [
+        snapshot["name"] for snapshot in self.snapshots
+        if f"{SNAP_PREFIX}{self.retention_policy}-" in snapshot["name"]
+        and snapshot["state"] == "READY"
+    ]
 
   def get_oldest_scheduler_snapshot(self) -> str or None:
     """Detect the oldest snapshot out of the instance snapshot list.
@@ -328,23 +324,20 @@ class FilestoreInstance(object):
     Returns:
       The oldest snapshot name or None if scheduler_snapshots_list is empty.
     """
-    epoch_dict = {}
-    if self.scheduler_snapshots:
-      snapshot_string_len = len(SNAP_PREFIX + self.retention_policy) + 1
-      for snapshot in self.scheduler_snapshots:
-        snapshot_date = get_resource_name(snapshot)[snapshot_string_len:]
-        epoch_dict[snapshot] = int(time.mktime(time.strptime(
-            snapshot_date, TIME_PATTERN)))
-      return min(epoch_dict, key=epoch_dict.get)
-    else:
+    if not self.scheduler_snapshots:
       return None
+    snapshot_string_len = len(SNAP_PREFIX + self.retention_policy) + 1
+    epoch_dict = {}
+    for snapshot in self.scheduler_snapshots:
+      snapshot_date = get_resource_name(snapshot)[snapshot_string_len:]
+      epoch_dict[snapshot] = int(time.mktime(time.strptime(
+          snapshot_date, TIME_PATTERN)))
+    return min(epoch_dict, key=epoch_dict.get)
 
   def increment_retention(self) -> None:
     """Create a new snapshot for the requested Filestore instance and delete one if needed."""
-    operation_url = self._create_snapshot()
-    if operation_url:
-      creation_completed = self._monitor_operation(operation_url)
-      if creation_completed:
+    if operation_url := self._create_snapshot():
+      if creation_completed := self._monitor_operation(operation_url):
         logger.info(
             "%i %s scheduler snapshots are found.",
             len(self.scheduler_snapshots), self.retention_policy)
